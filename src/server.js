@@ -1,21 +1,58 @@
-// في ملف src/server.js على GitHub
-const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const express = require('express');
+const cors = require('cors');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const QRCode = require('qrcode');
 
-let qrCodes = {};
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-app.get('/qr/:sessionId', (req, res) => {
-  const qr = qrCodes[req.params.sessionId];
-  res.json({ qr: qr || null, message: qr ? 'QR ready' : 'QR generation pending' });
+const sessions = {};
+const qrCodes = {};
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
 });
 
-// عند إنشاء جلسة جديدة
-async function startSession(sessionId) {
-  const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${sessionId}`);
-  const sock = makeWASocket({ auth: state });
+// Get all sessions
+app.get('/sessions', (req, res) => {
+  const sessionList = Object.keys(sessions).map(id => ({
+    id,
+    status: sessions[id]?.status || 'pending',
+    createdAt: sessions[id]?.createdAt
+  }));
+  res.json(sessionList);
+});
+
+// Create session
+app.post('/sessions', async (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'Session ID required' });
   
-  sock.ev.on('connection.update', ({ qr }) => {
-    if (qr) {
-      qrCodes[sessionId] = qr; // حفظ رمز QR
-    }
-  });
-}
+  if (sessions[id]) {
+    return res.json({ id, status: sessions[id].status });
+  }
+
+  sessions[id] = { status: 'pending', createdAt: new Date().toISOString() };
+  startSession(id);
+  res.json({ id, status: 'pending' });
+});
+
+// Get QR code
+app.get('/qr/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const qr = qrCodes[sessionId];
+  
+  if (qr) {
+    const qrImage = await QRCode.toDataURL(qr);
+    res.json({ qr: qrImage });
+  } else {
+    res.json({ qr: null, message: 'QR generation pending' });
+  }
+});
+
+// Delete session
+app.delete('/sessions/:id', (req, res) => {
+  const { id } = req.params;
+  delete sessions[id

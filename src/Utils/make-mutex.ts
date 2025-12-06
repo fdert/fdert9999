@@ -1,45 +1,42 @@
+import { Mutex as AsyncMutex } from 'async-mutex'
+
 export const makeMutex = () => {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let task = Promise.resolve() as Promise<any>
-
-	let taskTimeout: NodeJS.Timeout | undefined
-
-	return {
-		mutex<T>(code: () => Promise<T> | T): Promise<T> {
-			task = (async () => {
-				// wait for the previous task to complete
-				// if there is an error, we swallow so as to not block the queue
-				try {
-					await task
-				} catch {}
-
-				try {
-					// execute the current task
-					const result = await code()
-					return result
-				} finally {
-					clearTimeout(taskTimeout)
-				}
-			})()
-			// we replace the existing task, appending the new piece of execution to it
-			// so the next task will have to wait for this one to finish
-			return task
-		}
-	}
-}
+    const mutex = new AsyncMutex();
+    
+    return {
+        mutex<T>(code: () => Promise<T> | T): Promise<T> {
+            return mutex.runExclusive(code);
+        }
+    };
+};
 
 export type Mutex = ReturnType<typeof makeMutex>
 
 export const makeKeyedMutex = () => {
-	const map: { [id: string]: Mutex } = {}
+    const map = new Map<string, { mutex: AsyncMutex; refCount: number }>();
+    
+    return {
+        async mutex<T>(key: string, task: () => Promise<T> | T): Promise<T> {
+            let entry = map.get(key);
+            
+            if (!entry) {
+                entry = { mutex: new AsyncMutex(), refCount: 0 };
+                map.set(key, entry);
+            }
+            
+            entry.refCount++;
+            
+            try {
+                return await entry.mutex.runExclusive(task);
+            } finally {
+                entry.refCount--;
+                // only delete if this is still the current entry
+                if (entry.refCount === 0 && map.get(key) === entry) {
+                    map.delete(key);
+                }
+            }
+        }
+    };
+};
 
-	return {
-		mutex<T>(key: string, task: () => Promise<T> | T): Promise<T> {
-			if (!map[key]) {
-				map[key] = makeMutex()
-			}
-
-			return map[key].mutex(task)
-		}
-	}
-}
+export type KeyedMutex = ReturnType<typeof makeKeyedMutex>;

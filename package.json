@@ -1,3 +1,10 @@
+"dependencies": {
+  "express": "^4.18.2",
+  "cors": "^2.8.5",
+  "baileys": "^6.7.18",
+  "pino": "^8.16.0",
+  "qrcode": "^1.5.3"
+}
 {
   "name": "baileys",
   "version": "6.7.18",
